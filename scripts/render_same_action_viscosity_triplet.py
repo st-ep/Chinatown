@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
 import math
 import os
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -102,38 +101,6 @@ def _run(command: list[str], *, dry_run: bool = False) -> None:
     print("+", " ".join(str(part) for part in command), flush=True)
     if not dry_run:
         subprocess.run(command, cwd=ROOT, check=True)
-
-
-def _write_manifest(
-    path: Path,
-    *,
-    variants: list[ViscosityVariant],
-    output_paths: list[Path],
-    cache_path: Path,
-    num_frames: int,
-    frame_rate: int,
-    liquid_vis_mode: str | None,
-) -> None:
-    payload = {
-        "description": (
-            "Same raised-start robot action and same frame count viscosity sweep. "
-            "The honey-like variant uses a smaller SPH timestep for stability."
-        ),
-        "num_frames": num_frames,
-        "frame_rate": frame_rate,
-        "duration_seconds": num_frames / frame_rate,
-        "shared_cache_path": str(cache_path),
-        "liquid_vis_mode": liquid_vis_mode,
-        "variants": [
-            {
-                **asdict(variant),
-                "physics_dt": (1.0 / frame_rate) / variant.microsteps_per_frame,
-                "output_path": str(output_path),
-            }
-            for variant, output_path in zip(variants, output_paths)
-        ],
-    }
-    path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -311,15 +278,6 @@ def main(argv: list[str] | None = None) -> int:
         missing = [path for path in output_paths if not path.exists()]
         if missing:
             raise FileNotFoundError("missing rendered videos: " + ", ".join(str(path) for path in missing))
-        _write_manifest(
-            args.output_dir / "manifest.json",
-            variants=variants,
-            output_paths=output_paths,
-            cache_path=args.cache_path,
-            num_frames=args.num_frames,
-            frame_rate=mod.FRAME_RATE,
-            liquid_vis_mode=args.liquid_vis_mode,
-        )
 
     print("rendered videos:", flush=True)
     for output_path in output_paths:

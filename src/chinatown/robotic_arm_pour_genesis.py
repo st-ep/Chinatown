@@ -9,7 +9,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -61,117 +60,25 @@ WATER_FLOOR_CLEARANCE = WATER_PARTICLE_SIZE
 # the inner cavity height, not just 80% of the pre-settle emission height.
 EMISSION_OVERFILL_FACTOR = 1.405
 
-PICKUP_CENTER = np.array([-0.08, -0.20, GLASS_HEIGHT * 0.5], dtype=np.float64)
 POURER_CENTER = np.array([0.18, -0.20, 0.48], dtype=np.float64)
 RECEIVER_SCALE = 1.0
 RECEIVER_CENTER = np.array([0.29, -0.20, GLASS_HEIGHT * RECEIVER_SCALE * 0.5], dtype=np.float64)
 PANDA_BASE_POS = np.array([-0.15, 0.0, 0.0], dtype=np.float64)
 PANDA_BASE_EULER = np.array([0.0, 0.0, 0.0], dtype=np.float64)
-PANDA_Q_PICKUP_WAYPOINTS = np.array(
+PANDA_Q_UPRIGHT = np.array(
     [
-        [
-            -0.7246374487876892,
-            -0.7276675701141357,
-            -2.0172975063323975,
-            -2.6832516193389893,
-            0.22046126425266266,
-            1.6461186408996582,
-            1.4305617809295654,
-            0.026,
-            0.026,
-        ],
-        [
-            -0.785836935043335,
-            -0.6899892687797546,
-            -1.933987021446228,
-            -2.725632905960083,
-            0.26178979873657227,
-            1.6369209289550781,
-            1.4312199354171753,
-            0.026,
-            0.026,
-        ],
-        [
-            -1.0057501792907715,
-            -0.635722279548645,
-            -1.6544466018676758,
-            -2.8286755084991455,
-            0.36716127395629883,
-            1.603108525276184,
-            1.459531545639038,
-            0.026,
-            0.026,
-        ],
-        [
-            -1.3192821741104126,
-            -0.7745277285575867,
-            -1.2736576795578003,
-            -2.9592037200927734,
-            0.47090667486190796,
-            1.5834200382232666,
-            1.6276137828826904,
-            0.026,
-            0.026,
-        ],
-        [
-            -1.475845456123352,
-            -1.040704607963562,
-            -0.9697046875953674,
-            -3.068706750869751,
-            0.6468808650970459,
-            1.5945556163787842,
-            1.8681795597076416,
-            0.026,
-            0.026,
-        ],
-        [
-            -1.707260251045227,
-            -1.1022289991378784,
-            -0.4545893371105194,
-            -3.0717999935150146,
-            1.0619280338287354,
-            1.4178987741470337,
-            1.9398136138916016,
-            0.026,
-            0.026,
-        ],
-        [
-            -1.66274094581604,
-            -1.235813856124878,
-            -0.2388017475605011,
-            -3.042858839035034,
-            1.3112348318099976,
-            1.4581555128097534,
-            2.1156721115112305,
-            0.026,
-            0.026,
-        ],
-        [
-            -1.6089760065078735,
-            -1.2704020738601685,
-            -0.11118859052658081,
-            -2.98168683052063,
-            1.4556325674057007,
-            1.5152837038040161,
-            2.2145283222198486,
-            0.026,
-            0.026,
-        ],
-        [
-            -1.5916905403137207,
-            -1.2717534303665161,
-            -0.06664533913135529,
-            -2.951836109161377,
-            1.5030548572540283,
-            1.537463665008545,
-            2.2464425563812256,
-            0.026,
-            0.026,
-        ],
+        -1.5916905403137207,
+        -1.2717534303665161,
+        -0.06664533913135529,
+        -2.951836109161377,
+        1.5030548572540283,
+        1.537463665008545,
+        2.2464425563812256,
+        0.026,
+        0.026,
     ],
     dtype=np.float32,
 )
-PANDA_Q_UPRIGHT = PANDA_Q_PICKUP_WAYPOINTS[-1].copy()
 PANDA_Q_FULL_POUR = np.array(
     [
         -1.6516658067703247,
@@ -195,29 +102,11 @@ HANDLE_LOCAL_POS = np.array([-GLASS_OUTER_RADIUS - 0.060, 0.0, 0.055], dtype=np.
 HANDLE_SIZE = (0.120, 0.050, 0.100)
 PANDA_GRASP_TARGET_LOCAL = HANDLE_LOCAL_POS.copy()
 
-SURFACE_HOLD_SECONDS = 0.00
-LIFT_SECONDS = 0.00
-PRE_POUR_HOLD_SECONDS = 0.00
 TILT_SECONDS = 3.00
-POUR_HOLD_SECONDS = 0.00
 RETURN_SECONDS = 1.60
-PLACE_BACK_SECONDS = 0.00
-FINAL_HOLD_SECONDS = 0.00
 MAX_TILT_DEG = 82.6
 
-VIDEO_NUM_FRAMES = int(round(
-    (
-        SURFACE_HOLD_SECONDS
-        + LIFT_SECONDS
-        + PRE_POUR_HOLD_SECONDS
-        + TILT_SECONDS
-        + POUR_HOLD_SECONDS
-        + RETURN_SECONDS
-        + PLACE_BACK_SECONDS
-        + FINAL_HOLD_SECONDS
-    )
-    * FRAME_RATE
-))
+VIDEO_NUM_FRAMES = int(round((TILT_SECONDS + RETURN_SECONDS) * FRAME_RATE))
 VIDEO_RESOLUTION = (1280, 720)
 VIDEO_FPS = 60
 CAMERA_POS = (0.95, -1.35, 0.62)
@@ -265,14 +154,6 @@ class SimulationResult:
 def _smoothstep(x: float) -> float:
     x = float(np.clip(x, 0.0, 1.0))
     return x * x * (3.0 - 2.0 * x)
-
-
-def _quat_wxyz_from_axis_angle(axis: np.ndarray, degrees: float) -> np.ndarray:
-    axis = np.asarray(axis, dtype=np.float64)
-    axis /= np.linalg.norm(axis)
-    half = math.radians(degrees) * 0.5
-    s = math.sin(half)
-    return np.array([math.cos(half), axis[0] * s, axis[1] * s, axis[2] * s], dtype=np.float64)
 
 
 def _quat_to_matrix_wxyz(q: np.ndarray) -> np.ndarray:
@@ -405,57 +286,19 @@ def tilt_degrees_at(time_seconds: float) -> float:
 
 def pour_motion_fraction_at(time_seconds: float) -> float:
     t = float(time_seconds)
-    t -= SURFACE_HOLD_SECONDS + LIFT_SECONDS + PRE_POUR_HOLD_SECONDS
     if t < 0.0:
         return 0.0
     if t < TILT_SECONDS:
         return _smoothstep(t / TILT_SECONDS)
     t -= TILT_SECONDS
-    if t < POUR_HOLD_SECONDS:
-        return 1.0
-    t -= POUR_HOLD_SECONDS
     if t < RETURN_SECONDS:
         return 1.0 - _smoothstep(t / RETURN_SECONDS)
     return 0.0
 
 
-def lift_motion_fraction_at(time_seconds: float) -> float:
-    t = float(time_seconds) - SURFACE_HOLD_SECONDS
-    if t <= 0.0:
-        return 0.0
-    if t >= LIFT_SECONDS:
-        return 1.0
-    return t / LIFT_SECONDS
-
-
-def _interpolate_q_waypoints(waypoints: np.ndarray, fraction: float) -> np.ndarray:
-    fraction = float(np.clip(fraction, 0.0, 1.0))
-    if fraction <= 0.0:
-        return waypoints[0].copy()
-    if fraction >= 1.0:
-        return waypoints[-1].copy()
-    scaled = fraction * (len(waypoints) - 1)
-    segment = min(int(scaled), len(waypoints) - 2)
-    local = _smoothstep(scaled - segment)
-    return waypoints[segment] + (waypoints[segment + 1] - waypoints[segment]) * local
-
-
 def standard_robot_q_at(time_seconds: float) -> np.ndarray:
-    lift_done_time = SURFACE_HOLD_SECONDS + LIFT_SECONDS
-    pour_done_time = lift_done_time + PRE_POUR_HOLD_SECONDS + TILT_SECONDS + POUR_HOLD_SECONDS + RETURN_SECONDS
-
-    if time_seconds < lift_done_time:
-        q = _interpolate_q_waypoints(PANDA_Q_PICKUP_WAYPOINTS, lift_motion_fraction_at(time_seconds))
-    elif time_seconds < pour_done_time:
-        fraction = pour_motion_fraction_at(time_seconds)
-        q = PANDA_Q_UPRIGHT + (PANDA_Q_POUR - PANDA_Q_UPRIGHT) * fraction
-    elif PLACE_BACK_SECONDS > 0.0 and time_seconds < pour_done_time + PLACE_BACK_SECONDS:
-        fraction = (time_seconds - pour_done_time) / PLACE_BACK_SECONDS
-        q = _interpolate_q_waypoints(PANDA_Q_PICKUP_WAYPOINTS[::-1], fraction)
-    elif PLACE_BACK_SECONDS > 0.0:
-        q = PANDA_Q_PICKUP_WAYPOINTS[0].copy()
-    else:
-        q = PANDA_Q_UPRIGHT.copy()
+    fraction = pour_motion_fraction_at(time_seconds)
+    q = PANDA_Q_UPRIGHT + (PANDA_Q_POUR - PANDA_Q_UPRIGHT) * fraction
     q = q.astype(np.float32, copy=True)
     q[7:] = PANDA_FINGER_OPENING
     return q
@@ -720,7 +563,7 @@ def _write_glass_mesh(
     return path
 
 
-def build_glass_mesh(path: Optional[Path] = None) -> Path:
+def build_glass_mesh(path: Path | None = None) -> Path:
     """Write the watertight cup mesh used for both rendering and Genesis SDF coupling."""
     if path is None:
         path = GLASS_MESH_PATH
@@ -758,11 +601,8 @@ class RoboticArmPourGenesisDemo:
         self.max_pourer_solid_particles = 0
         self.max_receiver_solid_particles = 0
         self.max_pourer_base_particles = 0
-        self.boundary_correction_count = 0
-        self.max_boundary_projection_depth = 0.0
         self.standard_robot = None
         self.standard_robot_hand = None
-        self._standard_robot_last_q = PANDA_HOME_Q.copy()
         cup_pos, cup_quat = initial_glass_pose()
         self.current_cup_pos = cup_pos
         self.current_cup_quat = cup_quat
@@ -909,7 +749,6 @@ class RoboticArmPourGenesisDemo:
     def _finish_robot_visuals(self) -> None:
         self.standard_robot_hand = self.standard_robot.get_link(name="hand")
         self.standard_robot.set_dofs_position(PANDA_HOME_Q.copy(), zero_velocity=True)
-        self._standard_robot_last_q = PANDA_HOME_Q.copy()
 
     def _add_water(self) -> None:
         gs = self.gs
@@ -925,8 +764,8 @@ class RoboticArmPourGenesisDemo:
         cylinder_radius = max(GLASS_INNER_RADIUS - WATER_PARTICLE_SIZE, WATER_PARTICLE_SIZE)
         emission_height = emission_volume / (math.pi * cylinder_radius ** 2)
         cylinder_center_local_z = fill_bottom_local_z + emission_height * 0.5
-        pickup_pos, _ = initial_glass_pose()
-        water_center = pickup_pos + np.array([0.0, 0.0, cylinder_center_local_z], dtype=np.float64)
+        cup_pos, _ = initial_glass_pose()
+        water_center = cup_pos + np.array([0.0, 0.0, cylinder_center_local_z], dtype=np.float64)
 
         self.water = self.scene.add_entity(
             material=gs.materials.SPH.Liquid(
@@ -987,7 +826,6 @@ class RoboticArmPourGenesisDemo:
         if velocity_dt is not None:
             q_next = standard_robot_q_at(time_seconds + velocity_dt)
             self.standard_robot.set_dofs_velocity((q_next - q_current) / velocity_dt)
-        self._standard_robot_last_q = q_current.copy()
         return self._actual_standard_robot_grasp_pose()
 
     def _cup_pose_at(
@@ -999,22 +837,12 @@ class RoboticArmPourGenesisDemo:
         tcp_pos, hand_quat = self._standard_robot_grasp_pose_at(time_seconds, velocity_dt=velocity_dt)
         return _cup_pose_from_grasp_tcp(tcp_pos, hand_quat)
 
-    def _set_standard_robot_pose(
-        self,
-        time_seconds: float,
-        dt: float | None = None,
-    ) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]:
-        if dt is None:
-            dt = self.frame_dt
-        current_grasp_pose = self._standard_robot_grasp_pose_at(time_seconds, velocity_dt=dt)
-        next_grasp_pose = self._standard_robot_grasp_pose_at(time_seconds + dt)
-        self._standard_robot_grasp_pose_at(time_seconds, velocity_dt=dt)
-        return current_grasp_pose, next_grasp_pose
-
     def _apply_kinematic_pose(self, time_seconds: float, dt: float | None = None) -> None:
         if dt is None:
             dt = self.frame_dt
-        (tcp_pos, hand_quat), (next_tcp_pos, next_hand_quat) = self._set_standard_robot_pose(time_seconds, dt)
+        tcp_pos, hand_quat = self._standard_robot_grasp_pose_at(time_seconds, velocity_dt=dt)
+        next_tcp_pos, next_hand_quat = self._standard_robot_grasp_pose_at(time_seconds + dt)
+        self._standard_robot_grasp_pose_at(time_seconds, velocity_dt=dt)
         cup_pos, cup_quat = _cup_pose_from_grasp_tcp(tcp_pos, hand_quat)
         next_cup_pos, next_cup_quat = _cup_pose_from_grasp_tcp(next_tcp_pos, next_hand_quat)
         # The glass pose is the fixed handle grasp transform from the actual
@@ -1085,19 +913,16 @@ class RoboticArmPourGenesisDemo:
             return 0
 
         local_normals = np.zeros_like(local)
-        projection_depth = np.zeros(live_indices.size, dtype=np.float64)
         if side_wall.any():
             side_indices = np.flatnonzero(side_wall)
             local_normals[side_indices, :2] = local[side_indices, :2] / np.maximum(radial[side_indices, None], 1.0e-9)
             target_radius = inner_radius[side_indices] - SOURCE_WALL_CORRECTION_CLEARANCE
-            projection_depth[side_indices] = radial[side_indices] - target_radius
             local[side_indices, :2] = local_normals[side_indices, :2] * target_radius[:, None]
 
         if base.any():
             base_indices = np.flatnonzero(base)
             local_normals[base_indices, 2] = -1.0
             target_z = GLASS_INNER_FLOOR_Z + SOURCE_BASE_CORRECTION_CLEARANCE
-            projection_depth[base_indices] = target_z - local[base_indices, 2]
             local[base_indices, 2] = target_z
 
         changed_indices = live_indices[changed]
@@ -1111,12 +936,6 @@ class RoboticArmPourGenesisDemo:
         velocities[changed_indices] = wall_velocity + relative_velocity
         self.water.set_particles_pos(positions.astype(np.float32))
         self.water.set_particles_vel(velocities.astype(np.float32))
-        if changed_indices.size:
-            self.boundary_correction_count += int(changed_indices.size)
-            self.max_boundary_projection_depth = max(
-                self.max_boundary_projection_depth,
-                float(projection_depth[changed].max(initial=0.0)),
-            )
         return int(changed.sum())
 
     def _count_glass_solid_particles_by_glass(self, positions: np.ndarray, time_seconds: float) -> tuple[int, int]:
@@ -1130,10 +949,6 @@ class RoboticArmPourGenesisDemo:
             receiver_count = int(_glass_solid_mask(live, RECEIVER_CENTER, receiver_quat, scale=RECEIVER_SCALE).sum())
             return pourer_count, receiver_count
         return 0, 0
-
-    def _count_glass_solid_particles(self, positions: np.ndarray, time_seconds: float) -> int:
-        pourer_count, receiver_count = self._count_glass_solid_particles_by_glass(positions, time_seconds)
-        return pourer_count + receiver_count
 
     def _count_pourer_base_particles(self, positions: np.ndarray) -> int:
         live = positions[positions[:, 2] > -1.0]

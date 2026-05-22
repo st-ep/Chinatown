@@ -3,8 +3,8 @@
 Focused Genesis robot-arm pouring simulation for three same-action liquids:
 water, a log-midpoint viscosity, and a honey-like liquid.
 
-Generated particle caches, videos, manifests, and glass meshes are rebuilt under
-`outputs/` and are intentionally ignored by git.
+Generated particle caches, videos, and glass meshes are rebuilt under `outputs/`
+and are intentionally ignored by git.
 
 ## Install
 
