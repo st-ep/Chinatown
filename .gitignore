@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated media and analysis artifacts.
+*.mp4
+*.mov
+*.avi
+*.png
+*.jpg
+*.jpeg
+*.csv
+*.json
+
+# Regenerated Genesis caches, meshes, videos, plots, and frame dumps.
+outputs/*
+!outputs/.gitkeep
+
+# Editor / tool scratch files.
+.codex/
+

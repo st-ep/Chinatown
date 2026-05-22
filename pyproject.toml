@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chinatown"
+version = "0.1.0"
+description = "Focused Genesis robot-arm pouring simulation experiments."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "trimesh>=4.0",
+]
+
+[project.optional-dependencies]
+genesis = [
+    "genesis-world>=0.4.7",
+]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
