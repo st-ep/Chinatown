@@ -20,6 +20,13 @@ For local test tooling:
 python -m pip install -e ".[genesis,dev]"
 ```
 
+For the learning scripts, use an environment with PyTorch/TorchVision and
+FFmpeg available, then install:
+
+```bash
+python -m pip install -e ".[learning]"
+```
+
 ## Render
 
 Render all three liquids with the same robot trajectory and same frame count:
@@ -42,6 +49,51 @@ The default variants are:
 
 Honey-like uses a smaller SPH timestep for numerical stability while keeping
 the same visible robot action and video duration.
+
+All variants use the same liquid color by default, so viscosity is not encoded
+as an appearance shortcut.
+
+## Dataset Generation
+
+Generate a 128-video viscosity dataset with one shared liquid color and
+dataset-level metadata:
+
+```bash
+python scripts/generate_viscosity_dataset.py --num-videos 128
+```
+
+The dataset is written under `outputs/viscosity_dataset_128/` with one
+subdirectory per run, plus `manifest.csv` and `dataset_metadata.json`.
+
+After a sharded generation run, merge manifests, validate videos, and create
+train/validation/test split CSVs:
+
+```bash
+python scripts/prepare_viscosity_dataset.py
+```
+
+Train the first compact contrastive-regression sanity model:
+
+```bash
+python scripts/train_viscosity_contrastive.py --epochs 20 --batch-size 8 --amp
+```
+
+For the current 128-video single-viscosity dataset, the strongest simple
+baseline is regression-only with longer training:
+
+```bash
+python scripts/train_viscosity_contrastive.py \
+  --epochs 40 \
+  --batch-size 8 \
+  --amp \
+  --contrastive-weight 0 \
+  --regression-weight 1 \
+  --output-dir outputs/viscosity_training/regression_only
+```
+
+The learning script reads `outputs/viscosity_dataset_128/manifest.csv` and
+writes checkpoints, metrics, and predictions under
+`outputs/viscosity_training/sanity_cnn/`.
 
 ## Direct Run
 

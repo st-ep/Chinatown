@@ -26,6 +26,7 @@ DEFAULT_OUT_DIR = ROOT / "outputs" / "same_action_viscosity"
 HONEY_LIKE_VISCOSITY = 0.030
 HONEY_LIKE_MICROSTEPS_PER_FRAME = 360
 HONEY_LIKE_BOUNDARY_CORRECTION_INTERVAL = 4
+DEFAULT_SHARED_LIQUID_COLOR = (0.25, 0.55, 0.95, 1.0)
 
 
 @dataclass(frozen=True)
@@ -60,11 +61,27 @@ def _color_arg(color: tuple[float, float, float, float]) -> str:
     return ",".join(f"{channel:.6g}" for channel in color)
 
 
+def _parse_color(value: str) -> tuple[float, float, float, float]:
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) not in (3, 4):
+        raise argparse.ArgumentTypeError("color must be R,G,B or R,G,B,A")
+    try:
+        color = tuple(float(part) for part in parts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("color channels must be numeric") from exc
+    if any(channel < 0.0 or channel > 1.0 for channel in color):
+        raise argparse.ArgumentTypeError("color channels must be in [0, 1]")
+    if len(color) == 3:
+        return (*color, 1.0)
+    return color
+
+
 def _default_variants(
     *,
     water_viscosity: float,
     middle_viscosity: float | None,
     honey_like_viscosity: float,
+    liquid_color: tuple[float, float, float, float],
     base_microsteps_per_frame: int,
     base_source_boundary_correction_interval: int,
     honey_microsteps_per_frame: int,
@@ -76,21 +93,21 @@ def _default_variants(
         ViscosityVariant(
             "water",
             water_viscosity,
-            (0.25, 0.55, 0.95, 1.0),
+            liquid_color,
             base_microsteps_per_frame,
             base_source_boundary_correction_interval,
         ),
         ViscosityVariant(
             "middle_log",
             middle_viscosity,
-            (0.54, 0.45, 0.86, 1.0),
+            liquid_color,
             base_microsteps_per_frame,
             base_source_boundary_correction_interval,
         ),
         ViscosityVariant(
             "honey_like",
             honey_like_viscosity,
-            (1.0, 0.58, 0.08, 1.0),
+            liquid_color,
             honey_microsteps_per_frame,
             honey_source_boundary_correction_interval,
         ),
@@ -168,6 +185,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Genesis liquid visualization mode. Defaults to the custom-viscosity runner default.",
     )
     parser.add_argument(
+        "--liquid-color",
+        type=_parse_color,
+        default=DEFAULT_SHARED_LIQUID_COLOR,
+        help="Shared liquid render color as R,G,B or R,G,B,A. Applied to every viscosity variant.",
+    )
+    parser.add_argument(
         "--skip-existing",
         action="store_true",
         help="Do not rerender an existing output, unless the shared cache must be baked first.",
@@ -215,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         water_viscosity=args.water_viscosity,
         middle_viscosity=args.middle_viscosity,
         honey_like_viscosity=args.honey_like_viscosity,
+        liquid_color=args.liquid_color,
         base_microsteps_per_frame=args.base_microsteps_per_frame,
         base_source_boundary_correction_interval=args.base_source_boundary_correction_interval,
         honey_microsteps_per_frame=args.honey_microsteps_per_frame,
@@ -232,6 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
     print(f"shared settled cache: {args.cache_path}", flush=True)
+    print(f"shared liquid color: {_color_arg(args.liquid_color)}", flush=True)
     print("variant solver settings:", flush=True)
     for variant in variants:
         print(

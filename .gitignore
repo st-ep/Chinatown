@@ -13,6 +13,7 @@ __pycache__/
 *.jpeg
 *.csv
 *.json
+!codebase_context.json
 
 # Regenerated Genesis caches, meshes, videos, plots, and frame dumps.
 outputs/*
@@ -20,4 +21,3 @@ outputs/*
 
 # Editor / tool scratch files.
 .codex/
-

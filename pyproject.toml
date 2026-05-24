@@ -20,6 +20,10 @@ genesis = [
 dev = [
     "pytest",
 ]
+learning = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -57,6 +57,27 @@ def _configure_viscosity(
     mod.SETTLED_PARTICLES_CACHE = cache_path
 
 
+def _configure_action(
+    mod,
+    *,
+    tilt_seconds: float | None,
+    return_seconds: float | None,
+    pour_pose_fraction: float | None,
+) -> None:
+    if tilt_seconds is not None:
+        mod.TILT_SECONDS = float(tilt_seconds)
+    if return_seconds is not None:
+        mod.RETURN_SECONDS = float(return_seconds)
+    if pour_pose_fraction is not None:
+        mod.POUR_POSE_FRACTION = float(pour_pose_fraction)
+        mod.PANDA_Q_POUR = (
+            mod.PANDA_Q_UPRIGHT
+            + (mod.PANDA_Q_FULL_POUR - mod.PANDA_Q_UPRIGHT) * mod.POUR_POSE_FRACTION
+        )
+    if tilt_seconds is not None or return_seconds is not None:
+        mod.VIDEO_NUM_FRAMES = int(round((mod.TILT_SECONDS + mod.RETURN_SECONDS) * mod.FRAME_RATE))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -110,10 +131,34 @@ def main(argv: list[str] | None = None) -> int:
         default="1",
         help="CUDA device id to expose through CUDA_VISIBLE_DEVICES.",
     )
+    parser.add_argument(
+        "--tilt-seconds",
+        type=float,
+        default=None,
+        help="Override the time spent moving from upright to pouring pose.",
+    )
+    parser.add_argument(
+        "--return-seconds",
+        type=float,
+        default=None,
+        help="Override the time spent returning from pouring pose to upright.",
+    )
+    parser.add_argument(
+        "--pour-pose-fraction",
+        type=float,
+        default=None,
+        help="Override interpolation fraction from upright to the calibrated full-pour robot pose.",
+    )
     args = parser.parse_args(argv)
 
     if args.viscosity <= 0.0:
         parser.error("--viscosity must be positive")
+    if args.tilt_seconds is not None and args.tilt_seconds <= 0.0:
+        parser.error("--tilt-seconds must be positive")
+    if args.return_seconds is not None and args.return_seconds <= 0.0:
+        parser.error("--return-seconds must be positive")
+    if args.pour_pose_fraction is not None and not (0.0 < args.pour_pose_fraction <= 1.0):
+        parser.error("--pour-pose-fraction must be in (0, 1]")
     if args.microsteps_per_frame is not None and args.microsteps_per_frame <= 0:
         parser.error("--microsteps-per-frame must be positive")
     if (
@@ -132,6 +177,12 @@ def main(argv: list[str] | None = None) -> int:
         args.liquid_color,
         args.microsteps_per_frame,
         args.source_boundary_correction_interval,
+    )
+    _configure_action(
+        mod,
+        tilt_seconds=args.tilt_seconds,
+        return_seconds=args.return_seconds,
+        pour_pose_fraction=args.pour_pose_fraction,
     )
     if args.liquid_vis_mode is not None:
         mod.LIQUID_VIS_MODE = args.liquid_vis_mode
