@@ -95,6 +95,28 @@ The learning script reads `outputs/viscosity_dataset_128/manifest.csv` and
 writes checkpoints, metrics, and predictions under
 `outputs/viscosity_training/sanity_cnn/`.
 
+## Current Baseline
+
+The current core experiment is the 256-video action-varied viscosity baseline:
+
+```text
+4 robot actions x 64 log-spaced viscosities = 256 videos
+```
+
+It uses fixed camera, fixed geometry, and fixed liquid appearance, then predicts
+held-out viscosity values across all four actions. The compact regression-only
+3D CNN baseline reaches:
+
+- test MAE: `0.0190 log10(mu)`
+- typical multiplicative error: `1.045x`
+- test Spearman correlation: `0.985`
+
+See the tracked experiment write-up:
+
+```text
+reports/action_varied_viscosity_baseline.md
+```
+
 ## Direct Run
 
 Render one custom viscosity with the reusable runner:

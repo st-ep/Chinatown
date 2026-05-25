@@ -45,6 +45,9 @@ def _read_predictions(path: Path) -> list[dict[str, Any]]:
             {
                 **row,
                 "index": int(row["index"]),
+                "viscosity_index": int(row.get("viscosity_index", "-1") or -1),
+                "action_index": int(row.get("action_index", "-1") or -1),
+                "action_id": row.get("action_id", ""),
                 "target_log10_mu": float(row["target_log10_mu"]),
                 "pred_log10_mu": float(row["pred_log10_mu"]),
                 "retrieval_log10_mu": float(row["retrieval_log10_mu"]),
@@ -66,6 +69,7 @@ def _write_worst_errors(path: Path, rows: list[dict[str, Any]]) -> None:
         "split",
         "index",
         "run_id",
+        "action_id",
         "target_log10_mu",
         "pred_log10_mu",
         "target_mu",
@@ -86,6 +90,7 @@ def _write_worst_errors(path: Path, rows: list[dict[str, Any]]) -> None:
                     "split": row["split"],
                     "index": row["index"],
                     "run_id": row["run_id"],
+                    "action_id": row.get("action_id", ""),
                     "target_log10_mu": f"{row['target_log10_mu']:.8f}",
                     "pred_log10_mu": f"{row['pred_log10_mu']:.8f}",
                     "target_mu": f"{target_mu:.8g}",
@@ -158,6 +163,111 @@ def _plot_training_curve(path: Path, history: list[dict[str, Any]]) -> None:
     plt.close(fig)
 
 
+def _plot_error_by_viscosity(path: Path, rows: list[dict[str, Any]]) -> None:
+    fig, ax = plt.subplots(figsize=(7.0, 4.4), dpi=150)
+    colors = {"val": "#2b6cb0", "test": "#c05621"}
+    for split in ("val", "test"):
+        split_rows = [row for row in rows if row["split"] == split]
+        ax.scatter(
+            [row["target_log10_mu"] for row in split_rows],
+            [row["abs_error_log10_mu"] for row in split_rows],
+            s=28,
+            alpha=0.82,
+            label=split,
+            color=colors[split],
+            edgecolors="white",
+            linewidths=0.4,
+        )
+    ax.set_xlabel("true log10(mu)")
+    ax.set_ylabel("absolute error log10(mu)")
+    ax.set_title("Error by Viscosity")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _plot_predictions_by_action(path: Path, rows: list[dict[str, Any]]) -> None:
+    action_ids = sorted({row.get("action_id", "") for row in rows if row.get("action_id", "")})
+    if not action_ids:
+        return
+    palette = ["#2b6cb0", "#c05621", "#2f855a", "#805ad5", "#718096"]
+    fig, ax = plt.subplots(figsize=(6.4, 5.3), dpi=150)
+    for idx, action_id in enumerate(action_ids):
+        action_rows = [row for row in rows if row.get("action_id", "") == action_id]
+        ax.scatter(
+            [row["target_log10_mu"] for row in action_rows],
+            [row["pred_log10_mu"] for row in action_rows],
+            s=26,
+            alpha=0.82,
+            label=action_id,
+            color=palette[idx % len(palette)],
+            edgecolors="white",
+            linewidths=0.4,
+        )
+    all_values = [row["target_log10_mu"] for row in rows] + [row["pred_log10_mu"] for row in rows]
+    lo = min(all_values) - 0.06
+    hi = max(all_values) + 0.06
+    ax.plot([lo, hi], [lo, hi], color="#333333", linewidth=1.0, linestyle="--", label="ideal")
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+    ax.set_xlabel("true log10(mu)")
+    ax.set_ylabel("predicted log10(mu)")
+    ax.set_title("Predictions by Action")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="upper left", fontsize=7)
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _group_metrics(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    groups = sorted({row.get(key, "") for row in rows})
+    output: list[dict[str, Any]] = []
+    for group in groups:
+        group_rows = [row for row in rows if row.get(key, "") == group]
+        if not group_rows:
+            continue
+        errors = np.asarray([row["abs_error_log10_mu"] for row in group_rows], dtype=np.float64)
+        output.append(
+            {
+                key: group,
+                "count": int(len(group_rows)),
+                "mae_log10_mu": float(errors.mean()),
+                "typical_multiplicative_error": float(10.0 ** errors.mean()),
+                "max_error_log10_mu": float(errors.max()),
+            }
+        )
+    return output
+
+
+def _viscosity_bin_metrics(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    min_value = min(row["target_log10_mu"] for row in rows)
+    max_value = max(row["target_log10_mu"] for row in rows)
+    edges = [min_value, -2.5, -2.0, max_value + 1.0e-9]
+    labels = ["low", "middle", "high"]
+    output: list[dict[str, Any]] = []
+    for label, lo, hi in zip(labels, edges[:-1], edges[1:]):
+        bin_rows = [row for row in rows if lo <= row["target_log10_mu"] < hi]
+        if not bin_rows:
+            continue
+        errors = np.asarray([row["abs_error_log10_mu"] for row in bin_rows], dtype=np.float64)
+        output.append(
+            {
+                "bin": label,
+                "range_log10_mu": [float(lo), float(hi)],
+                "count": int(len(bin_rows)),
+                "mae_log10_mu": float(errors.mean()),
+                "typical_multiplicative_error": float(10.0 ** errors.mean()),
+                "max_error_log10_mu": float(errors.max()),
+            }
+        )
+    return output
+
+
 def _decision(metrics: dict[str, Any]) -> str:
     test_mae = float(metrics["test_mae_log10_mu"])
     if test_mae < 0.15:
@@ -186,17 +296,27 @@ def main(argv: list[str] | None = None) -> int:
 
     prediction_plot = output_dir / "prediction_scatter.png"
     training_plot = output_dir / "training_curve.png"
+    error_by_viscosity_plot = output_dir / "error_by_viscosity.png"
+    action_plot = output_dir / "prediction_scatter_by_action.png"
     worst_errors = output_dir / "worst_errors.csv"
     summary_path = output_dir / "analysis_summary.json"
     _plot_predictions(prediction_plot, rows, metrics)
     _plot_training_curve(training_plot, history)
+    _plot_error_by_viscosity(error_by_viscosity_plot, rows)
+    _plot_predictions_by_action(action_plot, rows)
     _write_worst_errors(worst_errors, worst_rows)
+    action_metrics = _group_metrics(rows, "action_id")
+    viscosity_bin_metrics = _viscosity_bin_metrics(rows)
 
     summary = {
         "decision": _decision(metrics),
         "metrics": metrics,
+        "action_metrics": action_metrics,
+        "viscosity_bin_metrics": viscosity_bin_metrics,
         "prediction_plot": str(prediction_plot),
         "training_plot": str(training_plot) if history else None,
+        "error_by_viscosity_plot": str(error_by_viscosity_plot),
+        "prediction_by_action_plot": str(action_plot) if action_plot.exists() else None,
         "worst_errors": str(worst_errors),
         "worst_error_log10_mu": worst_rows[0]["abs_error_log10_mu"] if worst_rows else math.nan,
         "worst_error_multiplicative": 10.0 ** worst_rows[0]["abs_error_log10_mu"] if worst_rows else math.nan,

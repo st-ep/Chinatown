@@ -20,10 +20,17 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET_DIR = ROOT / "outputs" / "viscosity_dataset_128"
 MANIFEST_FIELDS = [
     "index",
+    "viscosity_index",
     "run_id",
     "mu",
     "log10_mu",
     "seed",
+    "action_index",
+    "action_id",
+    "tilt_seconds",
+    "return_seconds",
+    "pour_pose_fraction",
+    "num_frames",
     "microsteps_per_frame",
     "source_boundary_correction_interval",
     "video_path",
@@ -113,6 +120,14 @@ def _assign_split(index: int, *, modulus: int, val_bucket: int, test_bucket: int
     return "train"
 
 
+def _split_index(row: dict[str, str], *, split_key: str) -> int:
+    if split_key == "viscosity_index":
+        if row.get("viscosity_index", "") == "":
+            raise ValueError("--split-key viscosity_index requires a viscosity_index column")
+        return int(row["viscosity_index"])
+    return int(row["index"])
+
+
 def _ffprobe(path: Path) -> VideoProbe:
     command = [
         "ffprobe",
@@ -194,6 +209,10 @@ def _validate_row(
         "video_path": _display_path(video_path),
         "metadata_path": _display_path(metadata_path),
     }
+    if row.get("action_id"):
+        record["action_id"] = row["action_id"]
+    if row.get("viscosity_index", "") != "":
+        record["viscosity_index"] = int(row["viscosity_index"])
 
     if not video_path.exists():
         errors.append("missing video")
@@ -261,10 +280,19 @@ def _canonicalize_row(row: dict[str, str], split: str) -> dict[str, str]:
     status = "complete" if video_path.exists() and metadata_path.exists() else row.get("status", "")
     return {
         "index": str(int(row["index"])),
+        "viscosity_index": str(int(row["viscosity_index"])) if row.get("viscosity_index", "") != "" else "",
         "run_id": row["run_id"],
         "mu": f"{float(row['mu']):.15g}",
         "log10_mu": f"{float(row['log10_mu']):.15g}",
-        "seed": str(int(row["seed"])),
+        "seed": str(int(row["seed"])) if row.get("seed", "") != "" else "",
+        "action_index": str(int(row["action_index"])) if row.get("action_index", "") != "" else "",
+        "action_id": row.get("action_id", ""),
+        "tilt_seconds": f"{float(row['tilt_seconds']):.15g}" if row.get("tilt_seconds", "") != "" else "",
+        "return_seconds": f"{float(row['return_seconds']):.15g}" if row.get("return_seconds", "") != "" else "",
+        "pour_pose_fraction": (
+            f"{float(row['pour_pose_fraction']):.15g}" if row.get("pour_pose_fraction", "") != "" else ""
+        ),
+        "num_frames": str(int(row["num_frames"])) if row.get("num_frames", "") != "" else "",
         "microsteps_per_frame": str(int(row["microsteps_per_frame"])),
         "source_boundary_correction_interval": str(int(row["source_boundary_correction_interval"])),
         "video_path": _display_path(video_path),
@@ -289,12 +317,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-fps", type=float, default=60.0)
     parser.add_argument("--expected-frames", type=int, default=276)
     parser.add_argument("--expected-duration", type=float, default=4.6)
+    parser.add_argument(
+        "--variable-frame-counts",
+        action="store_true",
+        help="Use each row's num_frames column and duration=num_frames/fps for QA.",
+    )
     parser.add_argument("--duration-tolerance", type=float, default=0.02)
     parser.add_argument("--blank-check-samples", type=int, default=3)
     parser.add_argument("--blank-std-threshold", type=float, default=1.0)
     parser.add_argument("--split-modulus", type=int, default=10)
     parser.add_argument("--val-bucket", type=int, default=5)
     parser.add_argument("--test-bucket", type=int, default=0)
+    parser.add_argument(
+        "--split-key",
+        choices=["index", "viscosity_index"],
+        default="index",
+        help="Column used for deterministic split assignment.",
+    )
     parser.add_argument("--allow-errors", action="store_true")
     args = parser.parse_args(argv)
 
@@ -321,20 +360,29 @@ def main(argv: list[str] | None = None) -> int:
 
     for row in source_rows:
         index = int(row["index"])
+        split_source_index = _split_index(row, split_key=args.split_key)
         split = _assign_split(
-            index,
+            split_source_index,
             modulus=args.split_modulus,
             val_bucket=args.val_bucket,
             test_bucket=args.test_bucket,
         )
         canonical = _canonicalize_row(row, split)
+        if args.variable_frame_counts:
+            if canonical.get("num_frames", "") == "":
+                raise ValueError("--variable-frame-counts requires a num_frames column")
+            expected_frames = int(canonical["num_frames"])
+            expected_duration = expected_frames / args.expected_fps
+        else:
+            expected_frames = args.expected_frames
+            expected_duration = args.expected_duration
         record, errors, warnings = _validate_row(
             canonical,
             expected_width=args.expected_width,
             expected_height=args.expected_height,
             expected_fps=args.expected_fps,
-            expected_frames=args.expected_frames,
-            expected_duration=args.expected_duration,
+            expected_frames=expected_frames,
+            expected_duration=expected_duration,
             duration_tolerance=args.duration_tolerance,
             blank_check_samples=args.blank_check_samples,
             blank_std_threshold=args.blank_std_threshold,
@@ -364,6 +412,11 @@ def main(argv: list[str] | None = None) -> int:
         "splits_dir": _display_path(splits_dir),
         "num_rows": len(canonical_rows),
         "split_counts": split_counts,
+        "split_key": args.split_key,
+        "split_modulus": args.split_modulus,
+        "val_bucket": args.val_bucket,
+        "test_bucket": args.test_bucket,
+        "variable_frame_counts": args.variable_frame_counts,
         "num_errors": len(all_errors),
         "num_warnings": len(all_warnings),
         "errors": all_errors,

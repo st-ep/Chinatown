@@ -150,7 +150,10 @@ class ViscosityVideoDataset(Dataset):
             "target": target,
             "mu": mu,
             "index": int(row["index"]),
+            "viscosity_index": int(row["viscosity_index"]) if row.get("viscosity_index", "") != "" else -1,
             "run_id": row["run_id"],
+            "action_index": int(row["action_index"]) if row.get("action_index", "") != "" else -1,
+            "action_id": row.get("action_id", ""),
             "video_path": str(video_path),
             "start_frame": start_frame,
         }

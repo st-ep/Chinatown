@@ -99,7 +99,10 @@ def _write_predictions(path: Path, rows: list[dict[str, Any]]) -> None:
     fieldnames = [
         "split",
         "index",
+        "viscosity_index",
         "run_id",
+        "action_index",
+        "action_id",
         "target_log10_mu",
         "pred_log10_mu",
         "retrieval_log10_mu",
@@ -273,7 +276,10 @@ def _evaluate(
                 {
                     "split": split,
                     "index": int(batch["index"][i]),
+                    "viscosity_index": int(batch["viscosity_index"][i]),
                     "run_id": batch["run_id"][i],
+                    "action_index": int(batch["action_index"][i]),
+                    "action_id": batch["action_id"][i],
                     "target_log10_mu": f"{target_value:.8f}",
                     "pred_log10_mu": f"{pred_value:.8f}",
                     "retrieval_log10_mu": f"{retrieval_value:.8f}",
@@ -332,7 +338,10 @@ def _evaluate_multiclip(
                     {
                         "split": split,
                         "index": index,
+                        "viscosity_index": int(batch["viscosity_index"][i]),
                         "run_id": batch["run_id"][i],
+                        "action_index": int(batch["action_index"][i]),
+                        "action_id": batch["action_id"][i],
                         "target": float(target_cpu[i]),
                         "video_path": batch["video_path"][i],
                         "predictions": [],
@@ -361,7 +370,10 @@ def _evaluate_multiclip(
             {
                 "split": split,
                 "index": index,
+                "viscosity_index": record["viscosity_index"],
                 "run_id": record["run_id"],
+                "action_index": record["action_index"],
+                "action_id": record["action_id"],
                 "target_log10_mu": f"{target_value:.8f}",
                 "pred_log10_mu": f"{pred_value:.8f}",
                 "retrieval_log10_mu": f"{retrieval_value:.8f}",
