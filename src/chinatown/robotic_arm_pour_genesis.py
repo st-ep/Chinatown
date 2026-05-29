@@ -6,7 +6,11 @@ import remains lightweight.
 """
 from __future__ import annotations
 
+import csv
+import fcntl
 import math
+import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -105,6 +109,8 @@ PANDA_GRASP_TARGET_LOCAL = HANDLE_LOCAL_POS.copy()
 TILT_SECONDS = 3.00
 RETURN_SECONDS = 1.60
 MAX_TILT_DEG = 82.6
+ACTION_PROGRAM_KEYFRAMES: tuple[tuple[float, float], ...] | None = None
+ACTION_PROGRAM_ID: str | None = None
 
 VIDEO_NUM_FRAMES = int(round((TILT_SECONDS + RETURN_SECONDS) * FRAME_RATE))
 VIDEO_RESOLUTION = (1280, 720)
@@ -121,8 +127,58 @@ SETTLED_PARTICLES_CACHE = (
     / "robotic_arm_raised_pour_base050_p006_fill080_over1405_clear006_fric005_soft0015_pose080_slow_fillet012_micro084_sdf0025_align0_corrbase_settled_water.npy"
 )
 GLASS_MESH_PATH = Path(__file__).resolve().parents[2] / "outputs" / "_genesis" / "pouring_glass.obj"
+GLASS_MESH_MIN_BYTES = 1024
 SETTLE_BAKE_SECONDS = 0.8
 STASHED_PARTICLE_POS = np.array([10.0, 10.0, -10.0], dtype=np.float32)
+
+CONTROL_TARGET_FRACTIONS = (0.25, 0.40, 0.55, 0.70)
+CONTROL_VOLUME_TOLERANCE_FRACTION = 0.03
+CONTROL_SPILL_TOLERANCE_FRACTION = 0.02
+
+
+@dataclass(frozen=True)
+class PourControlTask:
+    """Target-volume task expressed as a fraction of initial source particles."""
+
+    target_fraction: float
+    volume_tolerance_fraction: float = CONTROL_VOLUME_TOLERANCE_FRACTION
+    spill_tolerance_fraction: float = CONTROL_SPILL_TOLERANCE_FRACTION
+
+    def __post_init__(self) -> None:
+        if not (0.0 < self.target_fraction < 1.0):
+            raise ValueError("target_fraction must be in (0, 1)")
+        if self.volume_tolerance_fraction <= 0.0:
+            raise ValueError("volume_tolerance_fraction must be positive")
+        if self.spill_tolerance_fraction < 0.0:
+            raise ValueError("spill_tolerance_fraction must be non-negative")
+
+
+@dataclass(frozen=True)
+class PourStepMetrics:
+    """Per-frame metrics for no-video control and RL reward/debugging."""
+
+    frame_index: int
+    time_seconds: float
+    tilt_degrees: float
+    viscosity: float
+    target_fraction: float | None
+    initial_particle_count: int
+    particles_in_pourer: int
+    particles_in_receiver: int
+    live_particles: int
+    spilled_particles: int
+    pourer_fraction: float
+    receiver_fraction: float
+    spilled_fraction: float
+    target_error_fraction: float | None
+    success: bool | None
+
+
+def validate_control_target_fraction(target_fraction: float) -> float:
+    target = float(target_fraction)
+    if not (0.0 < target < 1.0):
+        raise ValueError("target_fraction must be in (0, 1)")
+    return target
 
 
 @dataclass(frozen=True)
@@ -154,6 +210,78 @@ class SimulationResult:
 def _smoothstep(x: float) -> float:
     x = float(np.clip(x, 0.0, 1.0))
     return x * x * (3.0 - 2.0 * x)
+
+
+def configure_pour_action_program(
+    keyframes: list[tuple[float, float]] | tuple[tuple[float, float], ...],
+    *,
+    action_id: str | None = None,
+) -> None:
+    """Configure a piecewise cup-pose-fraction trajectory.
+
+    Keyframes are ``(time_seconds, full_pose_fraction)`` pairs. Fractions are
+    absolute interpolation values from the upright Panda pose toward
+    ``PANDA_Q_FULL_POUR``. Segment interpolation uses smoothstep.
+    """
+    global ACTION_PROGRAM_ID, ACTION_PROGRAM_KEYFRAMES, PANDA_Q_POUR, POUR_POSE_FRACTION
+    global RETURN_SECONDS, TILT_SECONDS, VIDEO_NUM_FRAMES
+
+    if len(keyframes) < 2:
+        raise ValueError("an action program needs at least two keyframes")
+    normalized = tuple((float(time), float(fraction)) for time, fraction in keyframes)
+    if normalized[0][0] != 0.0:
+        raise ValueError("the first action keyframe must start at time 0.0")
+    previous_time = -math.inf
+    for time_seconds, fraction in normalized:
+        if time_seconds < 0.0:
+            raise ValueError("action keyframe times must be non-negative")
+        if time_seconds <= previous_time:
+            raise ValueError("action keyframe times must be strictly increasing")
+        if not (0.0 <= fraction <= 1.0):
+            raise ValueError("action keyframe fractions must be in [0, 1]")
+        previous_time = time_seconds
+
+    ACTION_PROGRAM_ID = action_id
+    ACTION_PROGRAM_KEYFRAMES = normalized
+    POUR_POSE_FRACTION = 1.0
+    PANDA_Q_POUR = PANDA_Q_FULL_POUR.copy()
+    TILT_SECONDS = normalized[-1][0]
+    RETURN_SECONDS = 0.0
+    VIDEO_NUM_FRAMES = max(1, int(round(normalized[-1][0] * FRAME_RATE)))
+
+
+def clear_pour_action_program() -> None:
+    global ACTION_PROGRAM_ID, ACTION_PROGRAM_KEYFRAMES
+
+    ACTION_PROGRAM_ID = None
+    ACTION_PROGRAM_KEYFRAMES = None
+
+
+def _piecewise_action_fraction_at(time_seconds: float) -> float:
+    if ACTION_PROGRAM_KEYFRAMES is None:
+        raise RuntimeError("no action program is configured")
+    t = float(time_seconds)
+    if t <= ACTION_PROGRAM_KEYFRAMES[0][0]:
+        return ACTION_PROGRAM_KEYFRAMES[0][1]
+    for (t0, f0), (t1, f1) in zip(ACTION_PROGRAM_KEYFRAMES[:-1], ACTION_PROGRAM_KEYFRAMES[1:]):
+        if t <= t1:
+            alpha = _smoothstep((t - t0) / (t1 - t0))
+            return float(f0 + (f1 - f0) * alpha)
+    return ACTION_PROGRAM_KEYFRAMES[-1][1]
+
+
+def action_command_at(time_seconds: float) -> dict[str, float | str | None]:
+    motion_fraction = pour_motion_fraction_at(time_seconds)
+    if ACTION_PROGRAM_KEYFRAMES is None:
+        full_pose_fraction = motion_fraction * POUR_POSE_FRACTION
+    else:
+        full_pose_fraction = motion_fraction
+    return {
+        "action_program_id": ACTION_PROGRAM_ID,
+        "time_seconds": float(time_seconds),
+        "motion_fraction": float(motion_fraction),
+        "full_pose_fraction": float(full_pose_fraction),
+    }
 
 
 def _quat_to_matrix_wxyz(q: np.ndarray) -> np.ndarray:
@@ -285,6 +413,8 @@ def tilt_degrees_at(time_seconds: float) -> float:
 
 
 def pour_motion_fraction_at(time_seconds: float) -> float:
+    if ACTION_PROGRAM_KEYFRAMES is not None:
+        return _piecewise_action_fraction_at(time_seconds)
     t = float(time_seconds)
     if t < 0.0:
         return 0.0
@@ -494,6 +624,7 @@ def _write_glass_mesh(
     import trimesh
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
 
     n = GLASS_MESH_SEGMENTS
     half_h = GLASS_HEIGHT * 0.5
@@ -559,19 +690,44 @@ def _write_glass_mesh(
 
     mesh = trimesh.Trimesh(vertices=verts, faces=np.asarray(faces), process=True)
     mesh.fix_normals()
-    mesh.export(path)
+    try:
+        mesh.export(tmp_path, file_type="obj")
+        tmp_path.replace(path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
     return path
 
 
-def build_glass_mesh(path: Path | None = None) -> Path:
-    """Write the watertight cup mesh used for both rendering and Genesis SDF coupling."""
+@contextmanager
+def _file_lock(lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _glass_mesh_exists(path: Path) -> bool:
+    return path.exists() and path.stat().st_size >= GLASS_MESH_MIN_BYTES
+
+
+def build_glass_mesh(path: Path | None = None, *, force: bool = False) -> Path:
+    """Ensure the watertight cup mesh used for rendering and Genesis SDF coupling exists."""
     if path is None:
         path = GLASS_MESH_PATH
-    return _write_glass_mesh(
-        path,
-        inner_radius=GLASS_INNER_RADIUS,
-        inner_floor_z=GLASS_INNER_FLOOR_Z,
-    )
+    path = Path(path)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with _file_lock(lock_path):
+        if not force and _glass_mesh_exists(path):
+            return path
+        return _write_glass_mesh(
+            path,
+            inner_radius=GLASS_INNER_RADIUS,
+            inner_floor_z=GLASS_INNER_FLOOR_Z,
+        )
 
 
 class RoboticArmPourGenesisDemo:
@@ -1050,6 +1206,36 @@ class RoboticArmPourGenesisDemo:
         self.initial_particles = settled.copy()
         return True
 
+    def initial_pourer_particle_count(self) -> int:
+        initial_in_pourer, _, _ = self.particle_counts(
+            self.initial_particles,
+            cup_pos=self.initial_cup_pos,
+            cup_quat=self.initial_cup_quat,
+        )
+        return initial_in_pourer
+
+    def particle_region_counts(
+        self,
+        particles: np.ndarray,
+        *,
+        cup_pos: np.ndarray | None = None,
+        cup_quat: np.ndarray | None = None,
+    ) -> tuple[int, int, int, int]:
+        if cup_pos is None:
+            cup_pos = self.current_cup_pos
+        if cup_quat is None:
+            cup_quat = self.current_cup_quat
+        live = particles[:, 2] > -1.0
+        in_pourer = _glass_inner_mask(particles, cup_pos, cup_quat)
+        in_receiver = _glass_inner_mask_scaled(
+            particles,
+            RECEIVER_CENTER,
+            np.array([1.0, 0.0, 0.0, 0.0]),
+            scale=RECEIVER_SCALE,
+        )
+        spilled = live & ~in_pourer & ~in_receiver
+        return int(in_pourer.sum()), int(in_receiver.sum()), int(spilled.sum()), int(live.sum())
+
     def particle_counts(
         self,
         particles: np.ndarray,
@@ -1070,6 +1256,39 @@ class RoboticArmPourGenesisDemo:
             scale=RECEIVER_SCALE,
         )
         return int(in_pourer.sum()), int(in_receiver.sum()), int(live.sum())
+
+    def step_metrics(self, task: PourControlTask | None = None) -> PourStepMetrics:
+        positions = self._particle_positions()
+        in_pourer, in_receiver, spilled, live = self.particle_region_counts(positions)
+        initial_count = max(1, self.initial_pourer_particle_count())
+        receiver_fraction = in_receiver / initial_count
+        spilled_fraction = spilled / initial_count
+        target_fraction = None if task is None else task.target_fraction
+        target_error = None
+        success = None
+        if task is not None:
+            target_error = receiver_fraction - task.target_fraction
+            success = (
+                abs(target_error) <= task.volume_tolerance_fraction
+                and spilled_fraction <= task.spill_tolerance_fraction
+            )
+        return PourStepMetrics(
+            frame_index=int(self.frame_index),
+            time_seconds=float(self.sim_time),
+            tilt_degrees=float(self.current_cup_tilt),
+            viscosity=float(WATER_VISCOSITY),
+            target_fraction=target_fraction,
+            initial_particle_count=initial_count,
+            particles_in_pourer=in_pourer,
+            particles_in_receiver=in_receiver,
+            live_particles=live,
+            spilled_particles=spilled,
+            pourer_fraction=in_pourer / initial_count,
+            receiver_fraction=receiver_fraction,
+            spilled_fraction=spilled_fraction,
+            target_error_fraction=target_error,
+            success=success,
+        )
 
     def run(self) -> SimulationResult:
         for _ in range(self.num_frames):
@@ -1144,12 +1363,29 @@ def run_simulation(
     return demo.run()
 
 
+def _write_csv_rows(path: str | Path, rows: list[dict]) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
+    with output.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def render_video(
     *,
     output_path: str = "outputs/robotic_arm_pour_genesis.mp4",
     num_frames: int = VIDEO_NUM_FRAMES,
     settled_cache: Path = SETTLED_PARTICLES_CACHE,
     rebake: bool = False,
+    control_task: PourControlTask | None = None,
+    metrics_path: str | Path | None = None,
+    action_trace_path: str | Path | None = None,
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1163,14 +1399,35 @@ def render_video(
         bake_settled_particles(cache_path=settled_cache)
         demo.load_settled_particles(settled_cache)
 
+    metrics_rows: list[dict] = []
+    action_trace_rows: list[dict] = []
+
+    def record_trace() -> None:
+        if metrics_path is not None:
+            metrics_rows.append(demo.step_metrics(control_task).__dict__)
+        if action_trace_path is not None:
+            action_trace_rows.append(
+                {
+                    "frame_index": int(demo.frame_index),
+                    "tilt_degrees": float(demo.current_cup_tilt),
+                    **action_command_at(demo.sim_time),
+                }
+            )
+
     demo.scene.visualizer.update(force=True)
     demo.camera.render(force_render=True)
     demo.camera.start_recording()
     demo.camera.render(force_render=True)
+    record_trace()
 
     for _ in range(num_frames - 1):
         demo.step()
         demo.camera.render()
+        record_trace()
 
     demo.camera.stop_recording(save_to_filename=str(output), fps=VIDEO_FPS)
+    if metrics_path is not None:
+        _write_csv_rows(metrics_path, metrics_rows)
+    if action_trace_path is not None:
+        _write_csv_rows(action_trace_path, action_trace_rows)
     return output

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -57,6 +58,13 @@ def _configure_viscosity(
     mod.SETTLED_PARTICLES_CACHE = cache_path
 
 
+def _configure_glass_mesh(mod, glass_mesh_path: Path | None) -> None:
+    if glass_mesh_path is None:
+        return
+    mod.GLASS_MESH_PATH = glass_mesh_path
+    mod.build_glass_mesh(glass_mesh_path)
+
+
 def _configure_action(
     mod,
     *,
@@ -76,6 +84,17 @@ def _configure_action(
         )
     if tilt_seconds is not None or return_seconds is not None:
         mod.VIDEO_NUM_FRAMES = int(round((mod.TILT_SECONDS + mod.RETURN_SECONDS) * mod.FRAME_RATE))
+
+
+def _configure_action_program(mod, path: Path | None) -> None:
+    if path is None:
+        return
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    keyframes = [
+        (float(frame["time_seconds"]), float(frame["pose_fraction"]))
+        for frame in payload["keyframes"]
+    ]
+    mod.configure_pour_action_program(keyframes, action_id=payload.get("action_id"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -149,6 +168,30 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override interpolation fraction from upright to the calibrated full-pour robot pose.",
     )
+    parser.add_argument(
+        "--action-program-path",
+        type=Path,
+        default=None,
+        help="JSON file containing piecewise action keyframes.",
+    )
+    parser.add_argument(
+        "--glass-mesh-path",
+        type=Path,
+        default=None,
+        help="OBJ mesh path used for both moving and receiving glasses.",
+    )
+    parser.add_argument(
+        "--metrics-path",
+        type=Path,
+        default=None,
+        help="Optional CSV path for per-frame privileged particle metrics.",
+    )
+    parser.add_argument(
+        "--action-trace-path",
+        type=Path,
+        default=None,
+        help="Optional CSV path for commanded action trace.",
+    )
     args = parser.parse_args(argv)
 
     if args.viscosity <= 0.0:
@@ -159,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--return-seconds must be positive")
     if args.pour_pose_fraction is not None and not (0.0 < args.pour_pose_fraction <= 1.0):
         parser.error("--pour-pose-fraction must be in (0, 1]")
+    if args.action_program_path is not None and not args.action_program_path.exists():
+        parser.error("--action-program-path does not exist")
     if args.microsteps_per_frame is not None and args.microsteps_per_frame <= 0:
         parser.error("--microsteps-per-frame must be positive")
     if (
@@ -170,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_device
     mod = _load_module()
     cache_path = args.cache_path or mod.SETTLED_PARTICLES_CACHE
+    _configure_glass_mesh(mod, args.glass_mesh_path)
     _configure_viscosity(
         mod,
         args.viscosity,
@@ -184,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         return_seconds=args.return_seconds,
         pour_pose_fraction=args.pour_pose_fraction,
     )
+    _configure_action_program(mod, args.action_program_path)
     if args.liquid_vis_mode is not None:
         mod.LIQUID_VIS_MODE = args.liquid_vis_mode
     num_frames = mod.VIDEO_NUM_FRAMES if args.num_frames is None else args.num_frames
@@ -215,6 +262,8 @@ def main(argv: list[str] | None = None) -> int:
         num_frames=num_frames,
         settled_cache=cache_path,
         rebake=args.rebake,
+        metrics_path=args.metrics_path,
+        action_trace_path=args.action_trace_path,
     )
     print(f"wrote {output}")
     return 0
